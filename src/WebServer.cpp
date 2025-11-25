@@ -91,6 +91,9 @@ void diagnoseEEPROMPerformance() {
 
 AsyncWebServer server(80);
 
+// Global scale instance pointer for dual HX711 configuration
+static Scale* globalScalePtr = nullptr;
+
 /*
  * API Endpoints for External Brewing Systems (e.g., GaggiMate):
  * 
@@ -108,6 +111,9 @@ AsyncWebServer server(80);
  */
 
 void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothScale, Display &display, BatteryMonitor &battery) {
+  // Store global scale pointer for dual HX711 configuration
+  globalScalePtr = &scale;
+
   if (!LittleFS.begin()) {
     Serial.println();
     Serial.println("=====================================");
@@ -143,6 +149,12 @@ void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothS
     json += "\"flowrate\":" + String(flowRate.getFlowRate(), 1) + ",";
     json += "\"scale_connected\":" + String(scale.isHX711Connected() ? "true" : "false") + ",";
     json += "\"filter_state\":\"" + scale.getFilterState() + "\",";
+    
+    // Add HX711 configuration info
+    json += "\"hx711_config\":\"";
+    json += scale.isDualHX711() ? "DUAL" : "SINGLE";
+    json += "\",";
+    json += "\"hx711_status\":\"" + scale.getHX711Status() + "\",";
     
     // Always show unified mode
     json += "\"mode\":\"UNIFIED\",";
@@ -368,16 +380,124 @@ void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothS
     request->send(200, "text/plain", String(scale.getCalibrationFactor(), 6));
   });
 
-  // Scale connection status endpoint
+  // Scale connection status endpoint - enhanced for dual HX711
   server.on("/api/scale/status", HTTP_GET, [&scale](AsyncWebServerRequest *request) {
     String json = "{";
     json += "\"connected\":" + String(scale.isHX711Connected() ? "true" : "false") + ",";
     json += "\"weight\":" + String(scale.getCurrentWeight(), 2) + ",";
     json += "\"raw_value\":" + String(scale.getRawValue()) + ",";
-    json += "\"calibration_factor\":" + String(scale.getCalibrationFactor(), 6);
+    json += "\"calibration_factor\":" + String(scale.getCalibrationFactor(), 6) + ",";
+    json += "\"hx711_config\":\"";
+    json += scale.isDualHX711() ? "DUAL" : "SINGLE";
+    json += "\",";
+    json += "\"hx711_status\":\"" + scale.getHX711Status() + "\"";
     json += "}";
     request->send(200, "application/json", json);
   });
+
+  // Dual HX711 configuration endpoint
+  server.on("/api/scale/dual-config", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (globalScalePtr == nullptr) {
+      request->send(500, "application/json", "{\"status\":\"error\",\"message\":\"Scale not initialized\"}");
+      return;
+    }
+    
+    String json = "{";
+    json += "\"dual_hx711\":" + String(globalScalePtr->isDualHX711() ? "true" : "false") + ",";
+    json += "\"hx711_status\":\"" + globalScalePtr->getHX711Status() + "\",";
+    json += "\"weight\":" + String(globalScalePtr->getCurrentWeight(), 2);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+// Dual HX711 Kalibrierungs-Endpoints
+server.on("/api/scale/calibration/dual", HTTP_GET, [&scale](AsyncWebServerRequest *request) {
+    if (!scale.isDualHX711()) {
+        request->send(400, "application/json", "{\"error\":\"Not in dual HX711 mode\"}");
+        return;
+    }
+    
+    String json = "{";
+    json += "\"calibration_factor1\":" + String(scale.getCalibrationFactor1(), 6) + ",";
+    json += "\"calibration_factor2\":" + String(scale.getCalibrationFactor2(), 6) + ",";
+    json += "\"raw_value1\":" + String(scale.getRawValue1()) + ",";
+    json += "\"raw_value2\":" + String(scale.getRawValue2());
+    json += "}";
+    request->send(200, "application/json", json);
+});
+
+server.on("/api/scale/calibration/dual", HTTP_POST, [&scale](AsyncWebServerRequest *request) {
+    if (!scale.isDualHX711()) {
+        request->send(400, "application/json", "{\"error\":\"Not in dual HX711 mode\"}");
+        return;
+    }
+    
+    if (request->hasParam("knownWeight", true) && 
+        request->hasParam("targetCell", true)) {
+        
+        String weightStr = request->getParam("knownWeight", true)->value();
+        String targetStr = request->getParam("targetCell", true)->value();
+        
+        float knownWeight = weightStr.toFloat();
+        int targetCell = targetStr.toInt();
+        
+        if (knownWeight > 0 && (targetCell == 1 || targetCell == 2)) {
+            long rawValue = (targetCell == 1) ? scale.getRawValue1() : scale.getRawValue2();
+            
+            if (rawValue != 0) {
+                float newCalibrationFactor = (float)rawValue / knownWeight;
+                
+                float factor1 = scale.getCalibrationFactor1();
+                float factor2 = scale.getCalibrationFactor2();
+                
+                if (targetCell == 1) {
+                    factor1 = newCalibrationFactor;
+                } else {
+                    factor2 = newCalibrationFactor;
+                }
+                
+                scale.setCalibrationFactors(factor1, factor2);
+                
+                String json = "{";
+                json += "\"status\":\"success\",";
+                json += "\"message\":\"Cell " + String(targetCell) + " calibrated!\",";
+                json += "\"new_calibration_factor" + String(targetCell) + "\":" + String(newCalibrationFactor, 6) + ",";
+                json += "\"calibration_factor1\":" + String(factor1, 6) + ",";
+                json += "\"calibration_factor2\":" + String(factor2, 6);
+                json += "}";
+                
+                request->send(200, "application/json", json);
+            } else {
+                request->send(400, "application/json", "{\"error\":\"Invalid raw reading from cell \"}" + String(targetCell));
+            }
+        } else {
+            request->send(400, "application/json", "{\"error\":\"Invalid weight or target cell\"}");
+        }
+    } else {
+        request->send(400, "application/json", "{\"error\":\"Missing parameters\"}");
+    }
+});
+
+// Erweiterter Scale Status mit Kalibrierungsinformationen
+server.on("/api/scale/calibration/status", HTTP_GET, [&scale](AsyncWebServerRequest *request) {
+    String json = "{";
+    json += "\"dual_hx711\":" + String(scale.isDualHX711() ? "true" : "false") + ",";
+    json += "\"connected\":" + String(scale.isHX711Connected() ? "true" : "false") + ",";
+    
+    if (scale.isDualHX711()) {
+        json += "\"calibration_factor1\":" + String(scale.getCalibrationFactor1(), 6) + ",";
+        json += "\"calibration_factor2\":" + String(scale.getCalibrationFactor2(), 6) + ",";
+        json += "\"raw_value1\":" + String(scale.getRawValue1()) + ",";
+        json += "\"raw_value2\":" + String(scale.getRawValue2());
+    } else {
+        json += "\"calibration_factor\":" + String(scale.getCalibrationFactor(), 6) + ",";
+        json += "\"raw_value\":" + String(scale.getRawValue());
+    }
+    
+    json += "}";
+    request->send(200, "application/json", json);
+});
+
 
   server.on("/api/wifi-creds", HTTP_GET, [](AsyncWebServerRequest *request) {
     String ssid = getStoredSSID();
@@ -563,7 +683,11 @@ void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothS
     json += "\"stabilityTimeout\":" + String(scale.getStabilityTimeout()) + ",";
     json += "\"medianSamples\":" + String(scale.getMedianSamples()) + ",";
     json += "\"averageSamples\":" + String(scale.getAverageSamples()) + ",";
-    json += "\"currentWeight\":" + String(scale.getCurrentWeight(), 1);
+    json += "\"currentWeight\":" + String(scale.getCurrentWeight(), 1) + ",";
+    json += "\"hx711_config\":\"";
+    json += scale.isDualHX711() ? "DUAL" : "SINGLE";
+    json += "\",";
+    json += "\"hx711_status\":\"" + scale.getHX711Status() + "\"";
     json += "}";
     request->send(200, "application/json", json);
   });
