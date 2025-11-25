@@ -18,7 +18,8 @@
 #endif
 
 // Pin definitions (currently identical for both boards)
-#define HX711_DATA_PIN      5   // GPIO5 - HX711 Data pin
+#define HX711_DATA_PIN1     5   // GPIO5 - HX711 Data1 pin
+#define HX711_DATA_PIN2     2   // GPIO2 - HX711 Data2 pin 
 #define HX711_CLOCK_PIN     6   // GPIO6 - HX711 Clock pin  
 #define TOUCH_TARE_PIN      4   // GPIO4 - Touch sensor for tare (T0)
 #define TOUCH_SLEEP_PIN     3   // GPIO3 - Touch sensor for sleep functionality
