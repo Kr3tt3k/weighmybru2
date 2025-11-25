@@ -3,10 +3,24 @@
 #include "Calibration.h"
 #include "FlowRate.h"
 
+// Konstruktor für einen HX711 (abwärtskompatibel)
 Scale::Scale(uint8_t dataPin, uint8_t clockPin, float calibrationFactor)
-    : dataPin(dataPin), clockPin(clockPin), calibrationFactor(calibrationFactor), currentWeight(0.0f),
-      readingIndex(0), samplesInitialized(false), previousFilteredWeight(0), medianSamples(3), averageSamples(2),
-      currentFilterState(STABLE), lastBrewingActivity(0), lastStableWeight(0.0f) {
+    : dataPin1(dataPin), dataPin2(0), clockPin(clockPin), calibrationFactor(calibrationFactor), 
+      currentWeight(0.0f), readingIndex(0), samplesInitialized(false), previousFilteredWeight(0), 
+      medianSamples(3), averageSamples(2), currentFilterState(STABLE), lastBrewingActivity(0), 
+      lastStableWeight(0.0f), dualHX711(false), lastSuccessfulRead(0) {
+    // Initialize readings array
+    for (int i = 0; i < MAX_SAMPLES; i++) {
+        readings[i] = 0.0f;
+    }
+}
+
+// Konstruktor für zwei HX711 mit gemeinsamen CLK-Pin
+Scale::Scale(uint8_t dataPin1, uint8_t dataPin2, uint8_t clockPin, float calibrationFactor)
+    : dataPin1(dataPin1), dataPin2(dataPin2), clockPin(clockPin), calibrationFactor(calibrationFactor),
+      currentWeight(0.0f), readingIndex(0), samplesInitialized(false), previousFilteredWeight(0),
+      medianSamples(3), averageSamples(2), currentFilterState(STABLE), lastBrewingActivity(0),
+      lastStableWeight(0.0f), dualHX711(true), lastSuccessfulRead(0) {
     // Initialize readings array
     for (int i = 0; i < MAX_SAMPLES; i++) {
         readings[i] = 0.0f;
@@ -17,62 +31,51 @@ bool Scale::begin() {
     Serial.println("Starting scale initialization...");
     
     preferences.begin("scale", false);
-    calibrationFactor = preferences.getFloat("calib", calibrationFactor);
+    
+    if (dualHX711) {
+        calibrationFactor1 = preferences.getFloat("calib1", calibrationFactor);
+        calibrationFactor2 = preferences.getFloat("calib2", calibrationFactor);
+        calibrationFactor = (calibrationFactor1 + calibrationFactor2) / 2.0f;
+    } else {
+        calibrationFactor = preferences.getFloat("calib", calibrationFactor);
+    }
     
     // Load filtering parameters with load cell-specific defaults
     loadFilterSettings();
     
     // Auto-adjust brewing threshold based on calibration factor and load cell characteristics
-    // Only if not previously saved by user (check if key exists)
     if (!preferences.isKey("brew_thresh")) {
-        // For 3kg load cells (1mV/V): calibration factors typically 400-800
-        // For 500g load cells (2mV/V): calibration factors typically 2000-5000+
         if (calibrationFactor < 1000) {
-            brewingThreshold = 0.25f;  // 3kg load cell with 1mV/V - needs higher threshold due to lower sensitivity
+            brewingThreshold = 0.25f;
             Serial.println("Auto-detected 3kg load cell (low calibration factor)");
         } else if (calibrationFactor < 2500) {
-            brewingThreshold = 0.15f; // Medium sensitivity load cell
+            brewingThreshold = 0.15f;
             Serial.println("Auto-detected medium sensitivity load cell");
         } else {
-            brewingThreshold = 0.1f;  // 500g load cell with 2mV/V - more sensitive, can use lower threshold
+            brewingThreshold = 0.1f;
             Serial.println("Auto-detected high sensitivity load cell (500g/2mV/V type)");
         }
-        saveFilterSettings(); // Save auto-detected values
+        saveFilterSettings();
     }
     
     preferences.end();
     
-    // Initialize HX711 with error handling
-    Serial.println("Initializing HX711...");
-    hx711.begin(dataPin, clockPin);
-    hx711.set_scale(calibrationFactor);
+    bool initializationSuccess = false;
     
-    // Test if HX711 is responding with a timeout
-    Serial.println("Testing HX711 connection...");
-    unsigned long startTime = millis();
-    bool testPassed = false;
-    
-    // Try to get a reading with 3 second timeout
-    while (millis() - startTime < 3000) {
-        if (hx711.is_ready()) {
-            long testReading = hx711.read();
-            if (testReading != 0) {  // HX711 returns 0 when not connected
-                testPassed = true;
-                Serial.println("HX711 test reading: " + String(testReading));
-                break;
-            }
-        }
-        delay(100);  // Small delay between attempts
+    if (dualHX711) {
+        Serial.println("Initializing dual HX711 configuration...");
+        Serial.println("Data Pin 1: " + String(dataPin1));
+        Serial.println("Data Pin 2: " + String(dataPin2));
+        Serial.println("Shared Clock Pin: " + String(clockPin));
+        initializationSuccess = initializeDualHX711();
+    } else {
+        Serial.println("Initializing single HX711 configuration...");
+        Serial.println("Data Pin: " + String(dataPin1));
+        Serial.println("Clock Pin: " + String(clockPin));
+        initializationSuccess = initializeSingleHX711();
     }
     
-    if (testPassed) {
-        Serial.println("HX711 connected successfully");
-        isConnected = true;
-        
-        // Only tare if connection is confirmed
-        Serial.println("Performing initial tare...");
-        hx711.tare();
-        
+    if (initializationSuccess) {
         Serial.println("Smart Scale filtering configured:");
         Serial.println("Brewing threshold: " + String(brewingThreshold) + "g");
         Serial.println("Stability timeout: " + String(stabilityTimeout) + "ms");
@@ -80,17 +83,108 @@ bool Scale::begin() {
         Serial.println("Average samples (stable): " + String(averageSamples));
         Serial.println("Smart filtering: ENABLED - Dynamic filter switching based on brewing activity");
         
+        if (dualHX711) {
+            Serial.printf("Dual HX711 - Calib1: %.6f, Calib2: %.6f\n", 
+                         calibrationFactor1, calibrationFactor2);
+        } else {
+            Serial.printf("Single HX711 - Calib: %.6f\n", calibrationFactor);
+        }
+        
+        // Initialen successful read setzen
+        lastSuccessfulRead = millis();
+        
         return true;
     } else {
-        Serial.println("ERROR: HX711 not responding!");
-        Serial.println("Check connections:");
-        Serial.println("- VCC to 3.3V or 5V");
-        Serial.println("- GND to GND");
-        Serial.println("- DT to GPIO " + String(dataPin));
-        Serial.println("- SCK to GPIO " + String(clockPin));
-        Serial.println("- Load cell connections");
-        
+        Serial.println("ERROR: HX711 initialization failed!");
         isConnected = false;
+        return false;
+    }
+}
+
+bool Scale::initializeSingleHX711() {
+    // Initialize single HX711
+    hx7111.begin(dataPin1, clockPin);
+    hx7111.set_scale(calibrationFactor);
+    
+    // Test connection
+    Serial.println("Testing HX711 connection...");
+    unsigned long startTime = millis();
+    
+    while (millis() - startTime < 3000) {
+        if (hx7111.is_ready()) {
+            long testReading = hx7111.read();
+            if (testReading != 0) {
+                Serial.println("HX711 connected successfully");
+                Serial.println("Test reading: " + String(testReading));
+                isConnected = true;
+                
+                // Perform initial tare
+                Serial.println("Performing initial tare...");
+                hx7111.tare();
+                return true;
+            }
+        }
+        delay(100);
+    }
+    
+    Serial.println("ERROR: Single HX711 not responding!");
+    return false;
+}
+
+bool Scale::initializeDualHX711() {
+    // Initialize both HX711 modules with shared clock pin
+    hx7111.begin(dataPin1, clockPin);
+    hx7112.begin(dataPin2, clockPin);
+    
+    hx7111.set_scale(calibrationFactor1);
+    hx7112.set_scale(calibrationFactor2);
+    
+    // Test both connections
+    Serial.println("Testing dual HX711 connections...");
+    unsigned long startTime = millis();
+    bool hx7111Ready = false;
+    bool hx7112Ready = false;
+    
+    while (millis() - startTime < 3000) {
+        if (hx7111.is_ready() && !hx7111Ready) {
+            long testReading1 = hx7111.read();
+            if (testReading1 != 0) {
+                hx7111Ready = true;
+                Serial.println("HX711 #1 connected - Raw: " + String(testReading1));
+            }
+        }
+        
+        if (hx7112.is_ready() && !hx7112Ready) {
+            long testReading2 = hx7112.read();
+            if (testReading2 != 0) {
+                hx7112Ready = true;
+                Serial.println("HX711 #2 connected - Raw: " + String(testReading2));
+            }
+        }
+        
+        if (hx7111Ready && hx7112Ready) {
+            break;
+        }
+        delay(100);
+    }
+    
+    if (hx7111Ready && hx7112Ready) {
+        Serial.println("Both HX711 modules connected successfully");
+        isConnected = true;
+        
+        // Perform initial tare on both modules
+        Serial.println("Performing initial tare on both HX711 modules...");
+        
+        // Tare sequentially to avoid conflicts on shared clock line
+        hx7111.tare();
+        delay(100);
+        hx7112.tare();
+        
+        return true;
+    } else {
+        Serial.println("ERROR: One or both HX711 modules not responding!");
+        Serial.println("HX711 #1: " + String(hx7111Ready ? "OK" : "FAILED"));
+        Serial.println("HX711 #2: " + String(hx7112Ready ? "OK" : "FAILED"));
         return false;
     }
 }
@@ -107,7 +201,16 @@ void Scale::tare(uint8_t times) {
     }
     
     Serial.println("Taring scale...");
-    hx711.tare(times);
+    
+    if (dualHX711) {
+        // Tare both modules sequentially
+        hx7111.tare(times);
+        delay(50); // Small delay between tare operations
+        hx7112.tare(times);
+    } else {
+        hx7111.tare(times);
+    }
+    
     Serial.println("Tare complete");
     
     // Reset smart filter state after taring - return to stable mode
@@ -131,14 +234,78 @@ void Scale::set_scale(float factor) {
     // Only save if the calibration factor actually changed
     if (calibrationFactor != factor) {
         calibrationFactor = factor;
-        hx711.set_scale(calibrationFactor);
+        if (dualHX711) {
+            // Im Dual-Modus beide Faktoren gleich setzen
+            calibrationFactor1 = factor;
+            calibrationFactor2 = factor;
+            hx7111.set_scale(calibrationFactor1);
+            hx7112.set_scale(calibrationFactor2);
+        } else {
+            hx7111.set_scale(calibrationFactor);
+        }
         saveCalibration();
     }
 }
 
+// NEUE METHODEN FÜR DUAL-KALIBRIERUNG
+void Scale::setCalibrationFactors(float factor1, float factor2) {
+    if (dualHX711) {
+        calibrationFactor1 = factor1;
+        calibrationFactor2 = factor2;
+        calibrationFactor = (factor1 + factor2) / 2.0f; // Kombinierter Faktor
+        
+        hx7111.set_scale(calibrationFactor1);
+        hx7112.set_scale(calibrationFactor2);
+        
+        saveDualCalibration();
+        
+        Serial.printf("Dual calibration factors set: Cell1=%.6f, Cell2=%.6f\n", 
+                     calibrationFactor1, calibrationFactor2);
+    } else {
+        // Single-Modus: Verwende nur einen Faktor
+        set_scale(factor1);
+    }
+}
+
+long Scale::getRawValue1() {
+    if (!isConnected || !dualHX711) return 0;
+    return hx7111.get_value(1);
+}
+
+long Scale::getRawValue2() {
+    if (!isConnected || !dualHX711) return 0;
+    return hx7112.get_value(1);
+}
+
+void Scale::saveDualCalibration() {
+    if (!dualHX711) return;
+    
+    preferences.begin("scale", false);
+    preferences.putFloat("calib1", calibrationFactor1);
+    preferences.putFloat("calib2", calibrationFactor2);
+    preferences.end();
+    
+    Serial.printf("Dual calibration saved: %.6f, %.6f\n", calibrationFactor1, calibrationFactor2);
+}
+
+void Scale::loadDualCalibration() {
+    if (!dualHX711) return;
+    
+    preferences.begin("scale", true);
+    calibrationFactor1 = preferences.getFloat("calib1", calibrationFactor);
+    calibrationFactor2 = preferences.getFloat("calib2", calibrationFactor);
+    calibrationFactor = (calibrationFactor1 + calibrationFactor2) / 2.0f;
+    preferences.end();
+}
+
 void Scale::saveCalibration() {
     preferences.begin("scale", false);
-    preferences.putFloat("calib", calibrationFactor);
+    if (dualHX711) {
+        preferences.putFloat("calib1", calibrationFactor1);
+        preferences.putFloat("calib2", calibrationFactor2);
+    } else {
+        preferences.putFloat("calib", calibrationFactor);
+    }
     preferences.end();
 }
 
@@ -163,17 +330,22 @@ float Scale::getWeight() {
     }
     lastReadTime = currentTime;
 
-    // Check if HX711 is ready before attempting to read
-    if (!hx711.is_ready()) {
-        return currentWeight;  // Return last known value if not ready
+    float rawReading;
+    
+    // Read from appropriate configuration
+    if (dualHX711) {
+        rawReading = readDualHX711();
+    } else {
+        rawReading = readSingleHX711();
     }
     
-    float rawReading = hx711.get_units(1);
-    
-    // Handle NaN or invalid readings
+    // Handle invalid readings
     if (isnan(rawReading)) {
         return currentWeight;
     }
+    
+    // ✅ SUCCESSFUL READ - Update timestamp for status detection
+    lastSuccessfulRead = currentTime;
     
     // Initialize sample buffer on first valid reading
     if (!samplesInitialized) {
@@ -255,15 +427,72 @@ float Scale::getWeight() {
     return currentWeight;
 }
 
+float Scale::readSingleHX711() {
+    if (!hx7111.is_ready()) {
+        return currentWeight;  // Return last known value if not ready
+    }
+    return hx7111.get_units(1);
+}
+
+float Scale::readDualHX711() {
+    // Read from both HX711 modules and combine the readings
+    if (!hx7111.is_ready() || !hx7112.is_ready()) {
+        return currentWeight;  // Return last known value if not ready
+    }
+    
+    float reading1 = hx7111.get_units(1);
+    float reading2 = hx7112.get_units(1);
+    
+    // KORREKTUR: Beide Zellen sind individuell kalibriert und zeigen 
+    // jeweils das GESAMTGEWICHT an, das sie tragen würden
+    // Daher müssen wir die Werte ADDITION um das Gesamtgewicht zu erhalten
+    float combinedWeight = reading1 + reading2;
+    
+    // Debug output
+    static unsigned long lastDebug = 0;
+    if (millis() - lastDebug > 5000) {
+        Serial.printf("Dual HX711 - Cell1: %.2fg, Cell2: %.2fg, Total: %.2fg\n", 
+                     reading1, reading2, combinedWeight);
+        lastDebug = millis();
+    }
+    
+    return combinedWeight;
+}
+
 float Scale::getCurrentWeight() {
     return currentWeight;
 }
 
 long Scale::getRawValue() {
     if (!isConnected) {
-        return 0;  // Return 0 if HX711 not connected
+        return 0;
     }
-    return hx711.get_value(1); // Get raw value from HX711
+    
+    if (dualHX711) {
+        // KORREKTUR: Rohwerte addieren für korrekte Kalibrierung
+        long value1 = hx7111.get_value(1);
+        long value2 = hx7112.get_value(1);
+        return value1 + value2;
+    } else {
+        return hx7111.get_value(1);
+    }
+}
+
+String Scale::getHX711Status() const {
+    if (!isConnected) {
+        return "DISCONNECTED";
+    }
+    
+    // Einfache Heuristik: Wenn innerhalb der letzten 5 Sekunden erfolgreich gelesen wurde = OK
+    bool isRecentlyActive = (millis() - lastSuccessfulRead) < 5000;
+    
+    if (dualHX711) {
+        // Im Dual-Modus gehen wir davon aus, dass beide funktionieren, wenn wir connected sind
+        // und regelmäßig Werte bekommen
+        return isRecentlyActive ? "DUAL_BOTH_OK" : "DUAL_BOTH_FAILED";
+    } else {
+        return isRecentlyActive ? "SINGLE_OK" : "SINGLE_FAILED";
+    }
 }
 
 void Scale::initializeSamples(float initialValue) {
@@ -309,19 +538,19 @@ float Scale::averageFilter(int samples) {
         validSamples++;
     }
     
-    return sum / validSamples; // Return simple average without additional smoothing
+    return sum / validSamples;
 }
 
 // Filter parameter setters with validation
 void Scale::setBrewingThreshold(float threshold) {
-    if (threshold >= 0.05f && threshold <= 1.0f) { // Reasonable bounds
+    if (threshold >= 0.05f && threshold <= 1.0f) {
         brewingThreshold = threshold;
         saveFilterSettings();
     }
 }
 
 void Scale::setStabilityTimeout(unsigned long timeout) {
-    if (timeout >= 500 && timeout <= 10000) { // 0.5-10 seconds
+    if (timeout >= 500 && timeout <= 10000) {
         stabilityTimeout = timeout;
         saveFilterSettings();
     }
@@ -352,11 +581,13 @@ void Scale::saveFilterSettings() {
 }
 
 void Scale::loadFilterSettings() {
+    preferences.begin("scale", true);
     // Load with sensible defaults
     brewingThreshold = preferences.getFloat("brew_thresh", 0.15f);
     stabilityTimeout = preferences.getULong("stab_timeout", 2000);
     medianSamples = preferences.getInt("median_samples", 3);
-    averageSamples = preferences.getInt("avg_samples", 2); // Reduced for faster response
+    averageSamples = preferences.getInt("avg_samples", 2);
+    preferences.end();
 }
 
 void Scale::setFlowRatePtr(FlowRate* flowRatePtr) {
