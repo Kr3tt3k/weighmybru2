@@ -220,8 +220,14 @@
     
     <!-- Scale Status Container -->
     <div class="bg-black-select rounded-xl p-3 space-y-2 mt-2">
-      <div class="flex justify-center space-x-2">
+      <div class="flex justify-center space-x-4">
         <span id="scaleStatus" class="px-3 py-1 bg-green-600 text-white rounded-full text-xs font-medium">HX711 Connected</span>
+        <span id="hx711Config" class="px-3 py-1 bg-blue-600 text-white rounded-full text-xs font-medium">SINGLE</span>
+        <span id="hx711Status" class="px-3 py-1 bg-green-600 text-white rounded-full text-xs font-medium">OK</span>
+      </div>
+      <!-- Filter State Display -->
+      <div class="flex justify-center">
+        <span id="filterState" class="px-3 py-1 bg-purple-600 text-white rounded-full text-xs font-medium">STABLE</span>
       </div>
     </div>
     
@@ -596,15 +602,8 @@
         // Add data to real-time chart
         addChartData(weight, flowrate, Date.now());
         
-        // Update scale connection status
-        const scaleStatus = document.getElementById('scaleStatus');
-        if (data.scale_connected) {
-          scaleStatus.innerText = 'HX711 Connected';
-          scaleStatus.className = 'px-3 py-1 bg-green-600 text-white rounded-full text-xs font-medium';
-        } else {
-          scaleStatus.innerText = 'HX711 Disconnected';
-          scaleStatus.className = 'px-3 py-1 bg-red-600 text-white rounded-full text-xs font-medium';
-        }
+        // Update scale connection status with HX711 configuration
+        updateHX711Status(data);
         
         // Update battery status indicator
         if (data.battery_percentage !== undefined) {
@@ -679,6 +678,75 @@
         }
       })
       .catch(err => console.error("Dashboard fetch error:", err));
+  }
+
+  // Function to update HX711 configuration and status display
+  function updateHX711Status(data) {
+    const scaleStatus = document.getElementById('scaleStatus');
+    const hx711Config = document.getElementById('hx711Config');
+    const hx711Status = document.getElementById('hx711Status');
+    const filterState = document.getElementById('filterState');
+    
+    // Update main scale connection status
+    if (data.scale_connected) {
+      scaleStatus.innerText = 'HX711 Connected';
+      scaleStatus.className = 'px-3 py-1 bg-green-600 text-white rounded-full text-xs font-medium';
+    } else {
+      scaleStatus.innerText = 'HX711 Disconnected';
+      scaleStatus.className = 'px-3 py-1 bg-red-600 text-white rounded-full text-xs font-medium';
+    }
+    
+    // Update HX711 configuration
+    if (data.hx711_config) {
+      hx711Config.innerText = data.hx711_config;
+      hx711Config.className = 'px-3 py-1 bg-blue-600 text-white rounded-full text-xs font-medium';
+    } else {
+      hx711Config.innerText = 'SINGLE';
+      hx711Config.className = 'px-3 py-1 bg-blue-600 text-white rounded-full text-xs font-medium';
+    }
+    
+    // Update HX711 status with color coding
+    if (data.hx711_status) {
+      let statusText = data.hx711_status;
+      let statusColor = 'bg-green-600'; // Default to green
+      
+      // Color coding based on status
+      if (statusText.includes('FAILED') || statusText === 'DISCONNECTED') {
+        statusColor = 'bg-red-600';
+      } else if (statusText.includes('ONLY')) {
+        statusColor = 'bg-yellow-600';
+      } else if (statusText.includes('OK')) {
+        statusColor = 'bg-green-600';
+      }
+      
+      hx711Status.innerText = statusText.replace('DUAL_', '').replace('SINGLE_', '');
+      hx711Status.className = `px-3 py-1 ${statusColor} text-white rounded-full text-xs font-medium`;
+    } else {
+      hx711Status.innerText = data.scale_connected ? 'OK' : 'DISCONNECTED';
+      hx711Status.className = data.scale_connected ? 
+        'px-3 py-1 bg-green-600 text-white rounded-full text-xs font-medium' : 
+        'px-3 py-1 bg-red-600 text-white rounded-full text-xs font-medium';
+    }
+    
+    // Update filter state
+    if (data.filter_state) {
+      filterState.innerText = data.filter_state;
+      let filterColor = 'bg-purple-600'; // Default
+      
+      switch(data.filter_state) {
+        case 'STABLE':
+          filterColor = 'bg-green-600';
+          break;
+        case 'BREWING':
+          filterColor = 'bg-orange-500';
+          break;
+        case 'TRANSITIONING':
+          filterColor = 'bg-yellow-600';
+          break;
+      }
+      
+      filterState.className = `px-3 py-1 ${filterColor} text-white rounded-full text-xs font-medium`;
+    }
   }
 
   let updateInterval = 100; // Start with 100ms (10x per second)
