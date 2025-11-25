@@ -16,15 +16,22 @@
 #include "BoardConfig.h"
 
 // Board-specific pin configuration
-uint8_t dataPin = HX711_DATA_PIN;     // HX711 Data pin
-uint8_t clockPin = HX711_CLOCK_PIN;   // HX711 Clock pin  
+uint8_t dataPin1 = HX711_DATA_PIN1;   // HX711 Data pin for first loadcell
+uint8_t dataPin2 = HX711_DATA_PIN2;   // HX711 Data pin for second loadcell
+uint8_t clockPin = HX711_CLOCK_PIN;   // Common HX711 Clock pin  
 uint8_t touchPin = TOUCH_TARE_PIN;    // Touch sensor for tare
 uint8_t sleepTouchPin = TOUCH_SLEEP_PIN;  // Touch sensor for sleep functionality
 uint8_t batteryPin = BATTERY_PIN;     // Battery voltage monitoring
 uint8_t sdaPin = I2C_SDA_PIN;         // I2C Data pin for display
 uint8_t sclPin = I2C_SCL_PIN;         // I2C Clock pin for display
-float calibrationFactor = 4195.712891;
-Scale scale(dataPin, clockPin, calibrationFactor);
+
+// Dual HX711 Kalibrierungsfaktoren
+float calibrationFactor1 = 4195.712891;  // Kalibrierungsfaktor für Zelle 1
+float calibrationFactor2 = 4195.712891;  // Kalibrierungsfaktor für Zelle 2
+float combinedCalibrationFactor = (calibrationFactor1 + calibrationFactor2) / 2.0f;
+
+// Dual HX711 Scale mit zwei Data-Pins und gemeinsamem Clock-Pin
+Scale scale(dataPin1, dataPin2, clockPin, combinedCalibrationFactor);
 FlowRate flowRate;
 BluetoothScale bluetoothScale;
 TouchSensor touchSensor(touchPin, &scale);
@@ -40,6 +47,16 @@ void setup() {
   Serial.printf("WeighMyBru² - %s\n", BOARD_NAME);
   Serial.printf("Board: %s\n", BOARD_DESCRIPTION);
   Serial.printf("Flash Size: %dMB\n", FLASH_SIZE_MB);
+  Serial.println("=================================");
+  
+  // Dual HX711 Konfiguration anzeigen
+  Serial.println("Dual HX711 Configuration:");
+  Serial.printf("  Data Pin 1: GPIO %d\n", dataPin1);
+  Serial.printf("  Data Pin 2: GPIO %d\n", dataPin2); 
+  Serial.printf("  Clock Pin:  GPIO %d\n", clockPin);
+  Serial.printf("  Calibration Factor 1: %.6f\n", calibrationFactor1);
+  Serial.printf("  Calibration Factor 2: %.6f\n", calibrationFactor2);
+  Serial.printf("  Combined Factor: %.6f\n", combinedCalibrationFactor);
   Serial.println("=================================");
   
   // Link scale and flow rate for tare operation coordination
@@ -116,14 +133,27 @@ void setup() {
   // Wait for WiFi to fully stabilize after BLE is already running
   delay(1500);
   Serial.printf("Version: %s\n", ESP.getSdkVersion());
-  // Initialize scale with error handling - don't block web server if HX711 fails
-  Serial.println("Initializing scale...");
+  
+  // Initialize DUAL HX711 scale with error handling
+  Serial.println("Initializing DUAL HX711 scale...");
   if (!scale.begin()) {
-    Serial.println("WARNING: Scale (HX711) initialization failed!");
+    Serial.println("WARNING: Dual HX711 scale initialization failed!");
     Serial.println("Web server will continue to run, but scale readings will not be available.");
-    Serial.println("Check HX711 wiring and connections.");
+    Serial.println("Check HX711 wiring and connections for both load cells.");
+    Serial.printf("  Data Pin 1: GPIO %d\n", dataPin1);
+    Serial.printf("  Data Pin 2: GPIO %d\n", dataPin2);
+    Serial.printf("  Clock Pin:  GPIO %d\n", clockPin);
   } else {
-    Serial.println("Scale initialized successfully");
+    Serial.println("Dual HX711 scale initialized successfully");
+    Serial.println("  Configuration: " + String(scale.isDualHX711() ? "DUAL" : "SINGLE"));
+    Serial.println("  Status: " + scale.getHX711Status());
+    
+    // Nach der Scale-Initialisierung die individuellen Faktoren setzen:
+    if (scale.isDualHX711()) {
+        scale.setCalibrationFactors(calibrationFactor1, calibrationFactor2);
+        Serial.println("  Individual calibration factors set for dual HX711");
+    }
+    
     // Now that scale is ready, set the reference in BluetoothScale
     bluetoothScale.setScale(&scale);
   }
@@ -178,6 +208,7 @@ void setup() {
 void loop() {
   static unsigned long lastWeightUpdate = 0;
   static unsigned long lastWiFiCheck = 0;
+  static unsigned long lastStatusLog = 0;
   
   // Update weight at optimal frequency for brewing accuracy
   if (millis() - lastWeightUpdate >= 20) { // Update every 20ms (50Hz) - still very responsive
@@ -192,6 +223,15 @@ void loop() {
   if (millis() - lastWiFiCheck >= 30000) {
     printWiFiStatus();
     lastWiFiCheck = millis();
+  }
+  
+  // Log scale status periodically (every 60 seconds)
+  if (millis() - lastStatusLog >= 60000) {
+    if (scale.isHX711Connected()) {
+      Serial.printf("Dual HX711 Status: %s, Weight: %.1fg\n", 
+                   scale.getHX711Status().c_str(), scale.getCurrentWeight());
+    }
+    lastStatusLog = millis();
   }
   
   // Maintain WiFi AP stability
