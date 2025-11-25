@@ -3,15 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WeighMyBru</title>
+  <title>WeighMyBru - Calibration</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/output.css">
   <script src="/js/alpine.min.js" defer></script>
   <link rel="stylesheet" href="/css/all.min.css">
+  <style>
+    .cell-indicator {
+      transition: all 0.3s ease;
+    }
+    .cell-active {
+      box-shadow: 0 0 0 2px #10B981;
+    }
+    .calibration-success {
+      background: linear-gradient(135deg, #10B981, #059669);
+    }
+  </style>
 </head>
 <body class="bg-black-background text-white">
 
 <div class="md:flex flex-col md:flex-row md:min-h-screen w-full font-light">
+  <!-- Navigation -->
   <div @click.away="open = false" class="flex flex-col w-full md:w-64 text-gray-700 bg-black-discord dark-mode:text-gray-200 dark-mode:bg-gray-800 flex-shrink-0" x-data="{ open: false }">
     <div class="flex-shrink-0 px-8 py-4 flex flex-row items-center justify-between">
       <a href="#" class="text-lg font-semibold tracking-widest text-green-600 bg-black-discord uppercase rounded-lg dark-mode:text-white focus:outline-none focus:shadow-outline">WeighMyBru</a>
@@ -29,31 +41,274 @@
       <a class="block px-4 py-2 mt-2 text-sm font-semibold text-gray-400 bg-transparent rounded-lg hover:text-stone-50 focus:text-stone-50 hover:bg-black-hover focus:bg-black-select focus:outline-none focus:shadow-outline" href="/updates.html"><i class="fa fa-upload mr-2" aria-hidden="true" style="color: rgb(71, 168, 100);"></i>Updates</a>
     </nav>
   </div>
+
   <main class="flex-grow overflow-y-auto p-8">
-    <h1 class="text-3xl text-white font-bold mb-4">Calibration</h1>
-    <div class="bg-black-select p-6 rounded shadow max-w-xl">
-      <div id="message" class="text-green-400 mb-2"></div>
-      <p id="status" class="text-red-400 mb-4"></p>
-      <div id="calibDisplay" class="mb-6">
-        <strong>Current Calibration Factor:</strong> <span id="currentCalib">Loading...</span>
+    <h1 class="text-3xl text-white font-bold mb-6">Calibration</h1>
+    
+    <!-- Scale Status Display -->
+    <div class="bg-black-select p-6 rounded-xl shadow-lg mb-8" id="scaleStatusCard">
+      <h2 class="text-2xl font-semibold mb-4 flex items-center">
+        <i class="fa fa-microchip mr-3" style="color: rgb(71, 168, 100);"></i>Scale Status
+      </h2>
+      
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="text-center">
+          <div id="scaleStatus" class="px-4 py-3 bg-green-600 text-white rounded-lg text-sm font-medium">Connected</div>
+          <div class="text-xs text-gray-400 mt-2">Connection</div>
+        </div>
+        <div class="text-center">
+          <div id="hx711Config" class="px-4 py-3 bg-blue-600 text-white rounded-lg text-sm font-medium">SINGLE</div>
+          <div class="text-xs text-gray-400 mt-2">Configuration</div>
+        </div>
+        <div class="text-center">
+          <div id="hx711Status" class="px-4 py-3 bg-green-600 text-white rounded-lg text-sm font-medium">OK</div>
+          <div class="text-xs text-gray-400 mt-2">Status</div>
+        </div>
+        <div class="text-center">
+          <div id="scaleWeight" class="px-4 py-3 bg-purple-600 text-white rounded-lg text-lg font-bold">0.0 g</div>
+          <div class="text-xs text-gray-400 mt-2">Current Weight</div>
+        </div>
       </div>
-      <div id="step1" class="mb-6">
-        <h2 class="text-2xl font-semibold mb-2">Step 1: Tare the Scale</h2>
-        <button id="tareBtn" class="bg-gray-600 hover:bg-button-green active:bg-green-900 text-white px-4 py-2 rounded">Tare</button>
-      </div>
-      <div id="step2" class="hidden mb-6">
-        <h2 class="text-2xl font-semibold mb-2">Step 2: Place Known Weight</h2>
-        <form id="calibrateForm">
-          <label for="knownWeight" class="block mb-2">Enter known weight (grams):</label>
-          <input type="number" id="knownWeight" name="knownWeight" required step="any" min="0.01" class="w-full px-3 py-2 mb-4 rounded text-black" />
-          <button type="submit" class="bg-gray-600 hover:bg-button-green active:bg-green-900 text-white px-4 py-2 rounded">Calibrate</button>
-        </form>
+
+      <!-- Dual HX711 Status Anzeige -->
+      <div id="dualHX711Status" class="hidden mt-6 p-4 bg-black-background rounded-lg">
+        <h3 class="text-lg font-semibold mb-3 text-green-400">Dual HX711 Configuration</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- Cell 1 -->
+          <div class="cell-indicator p-4 bg-gray-800 rounded-lg" id="cell1Indicator">
+            <h4 class="font-semibold mb-2 flex items-center">
+              <i class="fa fa-microchip mr-2 text-blue-400"></i>Load Cell 1
+            </h4>
+            <div class="space-y-2 text-sm">
+              <div class="flex justify-between">
+                <span class="text-gray-400">Raw Value:</span>
+                <span id="rawValue1" class="font-mono">0</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Calibration:</span>
+                <span id="calibFactor1" class="font-mono">0.000000</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Status:</span>
+                <span id="cell1Status" class="text-green-400">OK</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Cell 2 -->
+          <div class="cell-indicator p-4 bg-gray-800 rounded-lg" id="cell2Indicator">
+            <h4 class="font-semibold mb-2 flex items-center">
+              <i class="fa fa-microchip mr-2 text-green-400"></i>Load Cell 2
+            </h4>
+            <div class="space-y-2 text-sm">
+              <div class="flex justify-between">
+                <span class="text-gray-400">Raw Value:</span>
+                <span id="rawValue2" class="font-mono">0</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Calibration:</span>
+                <span id="calibFactor2" class="font-mono">0.000000</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Status:</span>
+                <span id="cell2Status" class="text-green-400">OK</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-    
+
+    <!-- Scale Calibration Section -->
+    <div class="bg-black-select p-6 rounded-xl shadow-lg mb-8">
+      <h2 class="text-2xl font-semibold mb-6 flex items-center">
+        <i class="fa fa-balance-scale mr-3" style="color: rgb(71, 168, 100);"></i>Scale Calibration
+      </h2>
+      
+      <div id="calibrationMessage" class="mb-4"></div>
+      
+      <!-- Single Calibration (für Single-Modus) -->
+      <div id="singleCalibration" class="mb-8">
+        <h3 class="text-xl font-semibold mb-4 text-blue-400">Single Calibration</h3>
+        <div class="bg-black-background p-4 rounded-lg mb-4">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-gray-300">Current Calibration Factor:</span>
+            <span id="currentCalib" class="font-mono text-green-400">Loading...</span>
+          </div>
+        </div>
+        
+        <div class="space-y-4">
+          <div class="step-card p-4 bg-gray-800 rounded-lg">
+            <h4 class="font-semibold mb-2">Step 1: Tare the Scale</h4>
+            <p class="text-sm text-gray-400 mb-3">Remove all weight from the scale</p>
+            <button id="tareBtn" class="bg-gray-700 hover:bg-green-600 active:bg-green-700 text-white px-6 py-2 rounded-lg transition-colors">
+              <i class="fa fa-balance-scale-left mr-2"></i>Tare Scale
+            </button>
+          </div>
+          
+          <div id="step2" class="step-card p-4 bg-gray-800 rounded-lg hidden">
+            <h4 class="font-semibold mb-2">Step 2: Place Known Weight</h4>
+            <p class="text-sm text-gray-400 mb-3">Place a known weight on the scale</p>
+            <form id="calibrateForm" class="space-y-3">
+              <div>
+                <label for="knownWeight" class="block text-sm mb-1">Known Weight (grams):</label>
+                <input type="number" id="knownWeight" name="knownWeight" required step="any" min="0.01" 
+                       class="w-full px-3 py-2 rounded text-black" placeholder="e.g., 100.0" />
+              </div>
+              <button type="submit" class="bg-gray-700 hover:bg-green-600 active:bg-green-700 text-white px-6 py-2 rounded-lg transition-colors">
+                <i class="fa fa-calculator mr-2"></i>Calibrate Combined
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dual HX711 Calibration -->
+      <div id="dualCalibration" class="hidden mt-8 pt-8 border-t border-gray-700">
+        <h3 class="text-xl font-semibold mb-6 text-green-400">Dual HX711 Calibration</h3>
+        <p class="text-sm text-gray-400 mb-6">Calibrate each load cell individually for optimal accuracy</p>
+        
+        <!-- NEU: Tare Step für Dual Modus -->
+        <div class="step-card p-4 bg-gray-800 rounded-lg mb-6">
+          <h4 class="font-semibold mb-2">Step 1: Tare the Scale</h4>
+          <p class="text-sm text-gray-400 mb-3">Remove all weight from the scale</p>
+          <button id="tareBtnDual" class="bg-gray-700 hover:bg-green-600 active:bg-green-700 text-white px-6 py-2 rounded-lg transition-colors">
+            <i class="fa fa-balance-scale-left mr-2"></i>Tare Scale
+          </button>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- Cell 1 Calibration -->
+          <div class="cell-calibration p-4 bg-gray-800 rounded-lg">
+            <h4 class="font-semibold mb-2">Step 2:</h4>
+            <h4 class="font-semibold mb-3 flex items-center text-blue-400">
+              <i class="fa fa-microchip mr-2"></i>Load Cell 1 Calibration
+            </h4>
+            
+            <div class="space-y-4">
+              <div class="bg-black-background p-3 rounded">
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-400">Current Factor:</span>
+                  <span id="currentCalib1" class="font-mono">0.000000</span>
+                </div>
+                <div class="flex justify-between text-sm mt-1">
+                  <span class="text-gray-400">Raw Value:</span>
+                  <span id="currentRaw1" class="font-mono">0</span>
+                </div>
+              </div>
+              
+              <form id="calibrateCell1Form" class="space-y-3">
+                <div>
+                  <label for="knownWeight1" class="block text-sm mb-1">Known Weight (grams):</label>
+                  <input type="number" id="knownWeight1" name="knownWeight1" required step="any" min="0.01" 
+                         class="w-full px-3 py-2 rounded text-black" placeholder="e.g., 100.0" />
+                </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-4 py-2 rounded transition-colors">
+                  <i class="fa fa-calculator mr-2"></i>Calibrate Cell 1
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Cell 2 Calibration -->
+          <div class="cell-calibration p-4 bg-gray-800 rounded-lg">
+            <h4 class="font-semibold mb-3 flex items-center text-green-400">
+              <i class="fa fa-microchip mr-2"></i>Load Cell 2 Calibration
+            </h4>
+            
+            <div class="space-y-4">
+              <div class="bg-black-background p-3 rounded">
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-400">Current Factor:</span>
+                  <span id="currentCalib2" class="font-mono">0.000000</span>
+                </div>
+                <div class="flex justify-between text-sm mt-1">
+                  <span class="text-gray-400">Raw Value:</span>
+                  <span id="currentRaw2" class="font-mono">0</span>
+                </div>
+              </div>
+              
+              <form id="calibrateCell2Form" class="space-y-3">
+                <div>
+                  <label for="knownWeight2" class="block text-sm mb-1">Known Weight (grams):</label>
+                  <input type="number" id="knownWeight2" name="knownWeight2" required step="any" min="0.01" 
+                         class="w-full px-3 py-2 rounded text-black" placeholder="e.g., 100.0" />
+                </div>
+                <button type="submit" class="w-full bg-green-600 hover:bg-green-700 active:bg-green-800 text-white px-4 py-2 rounded transition-colors">
+                  <i class="fa fa-calculator mr-2"></i>Calibrate Cell 2
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Combined Calibration for Dual Mode -->
+        <div class="mt-6 p-4 bg-gray-800 rounded-lg">
+          <h4 class="font-semibold mb-3 text-yellow-400">Combined Calibration (Both Cells)</h4>
+          <p class="text-sm text-gray-400 mb-3">Calibrate both cells simultaneously with the same weight</p>
+          
+          <form id="calibrateBothForm" class="space-y-3">
+            <div>
+              <label for="knownWeightBoth" class="block text-sm mb-1">Known Weight (grams):</label>
+              <input type="number" id="knownWeightBoth" name="knownWeightBoth" required step="any" min="0.01" 
+                     class="w-full px-3 py-2 rounded text-black" placeholder="e.g., 100.0" />
+            </div>
+            <button type="submit" class="bg-yellow-600 hover:bg-yellow-700 active:bg-yellow-800 text-white px-6 py-2 rounded transition-colors">
+              <i class="fa fa-calculator mr-2"></i>Calibrate Both Cells
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Manual Calibration -->
+      <div class="mt-8 pt-8 border-t border-gray-700">
+        <h3 class="text-xl font-semibold mb-4 text-purple-400">Manual Calibration</h3>
+        <p class="text-sm text-gray-400 mb-4">Set calibration factors directly</p>
+        
+        <div id="manualCalibrationSingle">
+          <form id="manualCalibrateForm">
+            <div class="flex space-x-4">
+              <div class="flex-1">
+                <label for="calibrationFactor" class="block text-sm mb-1">Calibration Factor:</label>
+                <input type="number" id="calibrationFactor" name="calibrationFactor" required step="any" 
+                       class="w-full px-3 py-2 rounded text-black" placeholder="e.g., 4195.71" />
+              </div>
+              <div class="flex items-end">
+                <button type="submit" class="bg-gray-700 hover:bg-purple-600 active:bg-purple-700 text-white px-6 py-2 rounded transition-colors">
+                  <i class="fa fa-save mr-2"></i>Set Factor
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+        
+        <div id="manualCalibrationDual" class="hidden mt-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="calibrationFactor1Manual" class="block text-sm mb-1">Cell 1 Factor:</label>
+              <input type="number" id="calibrationFactor1Manual" name="calibrationFactor1Manual" required step="any" 
+                     class="w-full px-3 py-2 rounded text-black" placeholder="e.g., 4195.71" />
+            </div>
+            <div>
+              <label for="calibrationFactor2Manual" class="block text-sm mb-1">Cell 2 Factor:</label>
+              <input type="number" id="calibrationFactor2Manual" name="calibrationFactor2Manual" required step="any"
+                     class="w-full px-3 py-2 rounded text-black" placeholder="e.g., -4195.71" />
+            </div>
+          </div>
+          <button id="setDualFactorsBtn" class="mt-4 bg-gray-700 hover:bg-purple-600 active:bg-purple-700 text-white px-6 py-2 rounded transition-colors">
+            <i class="fa fa-save mr-2"></i>Set Both Factors
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Battery Calibration Section -->
-    <div class="bg-black-select p-6 rounded shadow max-w-xl mt-8">
-      <h2 class="text-2xl font-semibold mb-4"><i class="fa fa-battery-half mr-2" style="color: rgb(71, 168, 100);"></i>Battery Calibration</h2>
+    <div class="bg-black-select p-6 rounded-xl shadow-lg">
+      <h2 class="text-2xl font-semibold mb-4 flex items-center">
+        <i class="fa fa-battery-half mr-3" style="color: rgb(71, 168, 100);"></i>Battery Calibration
+      </h2>
+      
+      <!-- Battery calibration content remains unchanged from previous version -->
       <div id="batteryMessage" class="text-green-400 mb-2"></div>
       <p id="batteryStatus" class="text-yellow-400 mb-4"></p>
       
@@ -82,90 +337,348 @@
           <label for="actualVoltage" class="block mb-2">Measured Battery Voltage (V):</label>
           <input type="number" id="actualVoltage" name="actualVoltage" required step="0.01" min="2.5" max="5.0" 
                  placeholder="e.g., 4.25" class="w-full px-3 py-2 mb-4 rounded text-black" />
-          <button type="submit" class="bg-gray-600 hover:bg-button-green active:bg-green-900 text-white px-4 py-2 rounded">
-            <i class="fa fa-calibrate mr-2"></i>Calibrate Battery
+          <button type="submit" class="bg-gray-700 hover:bg-green-600 active:bg-green-700 text-white px-4 py-2 rounded transition-colors">
+            <i class="fa fa-bolt mr-2"></i>Calibrate Battery
           </button>
         </form>
       </div>
     </div>
   </main>
 </div>
+
 <script>
-    const tareBtn = document.getElementById("tareBtn");
-    const step1 = document.getElementById("step1");
-    const step2 = document.getElementById("step2");
-    const status = document.getElementById("status");
-    const message = document.getElementById("message");
-    const calibrateForm = document.getElementById("calibrateForm");
+// Global variables
+let isDualHX711 = false;
+let currentCalibrationData = {};
+
+// DOM Elements
+const tareBtn = document.getElementById("tareBtn");
+const tareBtnDual = document.getElementById("tareBtnDual"); // NEU: Tare Button für Dual Modus
+const step2 = document.getElementById("step2");
+const calibrateForm = document.getElementById("calibrateForm");
+const manualCalibrateForm = document.getElementById("manualCalibrateForm");
+const calibrateCell1Form = document.getElementById("calibrateCell1Form");
+const calibrateCell2Form = document.getElementById("calibrateCell2Form");
+const calibrateBothForm = document.getElementById("calibrateBothForm");
+const setDualFactorsBtn = document.getElementById("setDualFactorsBtn");
+const calibrationMessage = document.getElementById("calibrationMessage");
+
+// Battery elements
+const batteryCalibrationForm = document.getElementById("batteryCalibrationForm");
+const batteryStatus = document.getElementById("batteryStatus");
+const batteryMessage = document.getElementById("batteryMessage");
+
+// Initialize calibration page
+async function initializeCalibrationPage() {
+    await updateScaleStatus();
+    await updateCalibrationData();
     
-    // Battery elements
-    const batteryCalibrationForm = document.getElementById("batteryCalibrationForm");
-    const batteryStatus = document.getElementById("batteryStatus");
-    const batteryMessage = document.getElementById("batteryMessage");
+    // Set up periodic updates
+    setInterval(updateScaleStatus, 1000);
+    setInterval(updateCalibrationData, 2000);
+}
 
-    // Scale calibration handlers
-    tareBtn.addEventListener("click", async () => {
-      status.textContent = "Taring...";
-      const response = await fetch("/api/tare", { method: "POST" });
-      const result = await response.text();
-      status.textContent = result;
-      if (result.toLowerCase().includes("tared")) {
-        step1.classList.add("hidden");
-        step2.classList.remove("hidden");
-      }
-    });
+// Update scale status display
+async function updateScaleStatus() {
+    try {
+        const response = await fetch('/api/dashboard');
+        const data = await response.json();
+        
+        // Update basic status
+        document.getElementById('scaleStatus').textContent = data.scale_connected ? 'Connected' : 'Disconnected';
+        document.getElementById('scaleStatus').className = `px-4 py-3 ${data.scale_connected ? 'bg-green-600' : 'bg-red-600'} text-white rounded-lg text-sm font-medium`;
+        
+        document.getElementById('hx711Config').textContent = data.hx711_config || 'SINGLE';
+        document.getElementById('hx711Status').textContent = data.hx711_status || 'OK';
+        document.getElementById('scaleWeight').textContent = `${data.weight.toFixed(1)} g`;
+        
+        // Check if dual HX711
+        isDualHX711 = data.hx711_config === 'DUAL';
+        
+        // Show/hide dual HX711 sections
+        const dualStatus = document.getElementById('dualHX711Status');
+        const dualCalibration = document.getElementById('dualCalibration');
+        const manualDual = document.getElementById('manualCalibrationDual');
+        const manualSingle = document.getElementById('manualCalibrationSingle');
+        const singleCalibration = document.getElementById('singleCalibration'); // NEU
+        
+        if (isDualHX711) {
+            dualStatus.classList.remove('hidden');
+            dualCalibration.classList.remove('hidden');
+            manualDual.classList.remove('hidden');
+            manualSingle.classList.add('hidden');
+            singleCalibration.classList.add('hidden'); // NEU: Single Calibration ausblenden
+        } else {
+            dualStatus.classList.add('hidden');
+            dualCalibration.classList.add('hidden');
+            manualDual.classList.add('hidden');
+            manualSingle.classList.remove('hidden');
+            singleCalibration.classList.remove('hidden'); // NEU: Single Calibration anzeigen
+        }
+        
+    } catch (error) {
+        console.error('Error updating scale status:', error);
+    }
+}
 
-    calibrateForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const knownWeight = document.getElementById("knownWeight").value;
-      status.textContent = "Calibrating...";
-      const params = new URLSearchParams();
-      params.append('knownWeight', knownWeight);
-      const response = await fetch("/api/calibrate", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString()
-      });
-      const result = await response.text();
-      status.textContent = result;
-    });
+// Update calibration data
+async function updateCalibrationData() {
+    try {
+        let url = isDualHX711 ? '/api/scale/calibration/dual' : '/api/scale/calibration/status';
+        const response = await fetch(url);
+        const data = await response.json();
+        currentCalibrationData = data;
+        
+        if (isDualHX711) {
+            // Update dual calibration display
+            document.getElementById('currentCalib1').textContent = data.calibration_factor1.toFixed(6);
+            document.getElementById('currentCalib2').textContent = data.calibration_factor2.toFixed(6);
+            document.getElementById('currentRaw1').textContent = data.raw_value1;
+            document.getElementById('currentRaw2').textContent = data.raw_value2;
+            
+            document.getElementById('rawValue1').textContent = data.raw_value1;
+            document.getElementById('rawValue2').textContent = data.raw_value2;
+            document.getElementById('calibFactor1').textContent = data.calibration_factor1.toFixed(6);
+            document.getElementById('calibFactor2').textContent = data.calibration_factor2.toFixed(6);
+            
+            // Update manual calibration inputs
+            document.getElementById('calibrationFactor1Manual').value = data.calibration_factor1;
+            document.getElementById('calibrationFactor2Manual').value = data.calibration_factor2;
+        } else {
+            // Update single calibration display
+            document.getElementById('currentCalib').textContent = data.calibration_factor.toFixed(6);
+            document.getElementById('calibrationFactor').value = data.calibration_factor;
+        }
+        
+    } catch (error) {
+        console.error('Error updating calibration data:', error);
+    }
+}
 
-    // Battery calibration handler
-    batteryCalibrationForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const actualVoltage = document.getElementById("actualVoltage").value;
-      batteryStatus.textContent = "Calibrating battery...";
-      batteryMessage.textContent = "";
-      
-      try {
+// Scale calibration handlers
+tareBtn.addEventListener("click", async () => {
+    showMessage("Taring scale...", "blue");
+    try {
+        const response = await fetch("/api/tare", { method: "POST" });
+        const result = await response.text();
+        showMessage(result, "green");
+        if (result.toLowerCase().includes("tared")) {
+            step2.classList.remove("hidden");
+        }
+    } catch (error) {
+        showMessage("Tare failed: " + error.message, "red");
+    }
+});
+
+// NEU: Event Listener für Dual Tare Button
+tareBtnDual.addEventListener("click", async () => {
+    showMessage("Taring scale for dual mode...", "blue");
+    try {
+        const response = await fetch("/api/tare", { method: "POST" });
+        const result = await response.text();
+        showMessage(result, "green");
+    } catch (error) {
+        showMessage("Tare failed: " + error.message, "red");
+    }
+});
+
+calibrateForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const knownWeight = document.getElementById("knownWeight").value;
+    showMessage("Calibrating...", "blue");
+    
+    try {
+        const params = new URLSearchParams();
+        params.append('knownWeight', knownWeight);
+        const response = await fetch("/api/calibrate", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: params.toString()
+        });
+        const result = await response.text();
+        showMessage(result, "green");
+        updateCalibrationData();
+    } catch (error) {
+        showMessage("Calibration failed: " + error.message, "red");
+    }
+});
+
+// Dual HX711 calibration handlers
+calibrateCell1Form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    await calibrateIndividualCell(1);
+});
+
+calibrateCell2Form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    await calibrateIndividualCell(2);
+});
+
+calibrateBothForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const knownWeight = document.getElementById("knownWeightBoth").value;
+    showMessage("Calibrating both cells...", "blue");
+    
+    try {
+        // Calibrate cell 1
+        let params = new URLSearchParams();
+        params.append('knownWeight', knownWeight);
+        params.append('targetCell', '1');
+        await fetch("/api/scale/calibration/dual", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: params.toString()
+        });
+        
+        // Calibrate cell 2
+        params = new URLSearchParams();
+        params.append('knownWeight', knownWeight);
+        params.append('targetCell', '2');
+        const response = await fetch("/api/scale/calibration/dual", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: params.toString()
+        });
+        
+        const result = await response.json();
+        if (result.status === "success") {
+            showMessage("Both cells calibrated successfully!", "green");
+            updateCalibrationData();
+        } else {
+            showMessage("Calibration failed: " + result.error, "red");
+        }
+    } catch (error) {
+        showMessage("Calibration failed: " + error.message, "red");
+    }
+});
+
+async function calibrateIndividualCell(cellNumber) {
+    const knownWeight = document.getElementById(`knownWeight${cellNumber}`).value;
+    showMessage(`Calibrating cell ${cellNumber}...`, "blue");
+    
+    try {
+        const params = new URLSearchParams();
+        params.append('knownWeight', knownWeight);
+        params.append('targetCell', cellNumber.toString());
+        
+        const response = await fetch("/api/scale/calibration/dual", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: params.toString()
+        });
+        
+        const result = await response.json();
+        if (result.status === "success") {
+            showMessage(result.message, "green");
+            updateCalibrationData();
+            
+            // Highlight the calibrated cell
+            const cellIndicator = document.getElementById(`cell${cellNumber}Indicator`);
+            cellIndicator.classList.add('cell-active');
+            setTimeout(() => cellIndicator.classList.remove('cell-active'), 2000);
+        } else {
+            showMessage("Calibration failed: " + result.error, "red");
+        }
+    } catch (error) {
+        showMessage("Calibration failed: " + error.message, "red");
+    }
+}
+
+// Manual calibration handlers
+manualCalibrateForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const calibrationFactor = document.getElementById("calibrationFactor").value;
+    await setManualCalibration(calibrationFactor);
+});
+
+setDualFactorsBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const factor1 = document.getElementById("calibrationFactor1Manual").value;
+    const factor2 = document.getElementById("calibrationFactor2Manual").value;
+    await setDualManualCalibration(factor1, factor2);
+});
+
+async function setManualCalibration(factor) {
+    showMessage("Setting calibration factor...", "blue");
+    try {
+        const params = new URLSearchParams();
+        params.append('calibrationfactor', factor);
+        const response = await fetch("/api/set-calibrationfactor", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: params.toString()
+        });
+        const result = await response.text();
+        showMessage(result, "green");
+        updateCalibrationData();
+    } catch (error) {
+        showMessage("Failed to set calibration factor: " + error.message, "red");
+    }
+}
+
+async function setDualManualCalibration(factor1, factor2) {
+    showMessage("Setting dual calibration factors...", "blue");
+    try {
+        // For dual calibration, we need to implement a new endpoint or use existing one
+        // This is a placeholder - you'll need to implement the actual API call
+        showMessage("Dual manual calibration not yet implemented", "yellow");
+    } catch (error) {
+        showMessage("Failed to set calibration factors: " + error.message, "red");
+    }
+}
+
+// Battery calibration handler (unchanged)
+batteryCalibrationForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const actualVoltage = document.getElementById("actualVoltage").value;
+    batteryStatus.textContent = "Calibrating battery...";
+    batteryMessage.textContent = "";
+    
+    try {
         const response = await fetch(`/api/battery/calibrate?voltage=${actualVoltage}`);
         const result = await response.json();
         
         if (result.status === "success") {
-          batteryMessage.textContent = `✓ ${result.message}`;
-          batteryStatus.textContent = `Before: ${result.before_voltage}V (${result.before_percentage}%) → After: ${result.after_voltage}V (${result.after_percentage}%)`;
-          batteryStatus.className = "text-green-400 mb-4";
-          
-          // Update current battery display
-          updateBatteryDisplay();
-          
-          // Clear form
-          document.getElementById("actualVoltage").value = "";
+            batteryMessage.textContent = `✓ ${result.message}`;
+            batteryStatus.textContent = `Before: ${result.before_voltage}V (${result.before_percentage}%) → After: ${result.after_voltage}V (${result.after_percentage}%)`;
+            batteryStatus.className = "text-green-400 mb-4";
+            updateBatteryDisplay();
+            document.getElementById("actualVoltage").value = "";
         } else {
-          batteryMessage.textContent = "";
-          batteryStatus.textContent = `❌ Error: ${result.message}`;
-          batteryStatus.className = "text-red-400 mb-4";
+            batteryMessage.textContent = "";
+            batteryStatus.textContent = `❌ Error: ${result.message}`;
+            batteryStatus.className = "text-red-400 mb-4";
         }
-      } catch (error) {
+    } catch (error) {
         batteryMessage.textContent = "";
         batteryStatus.textContent = `❌ Network error: ${error.message}`;
         batteryStatus.className = "text-red-400 mb-4";
-      }
-    });
+    }
+});
 
-    // Function to update battery display
-    async function updateBatteryDisplay() {
-      try {
+// Utility function to show messages
+function showMessage(message, type = "blue") {
+    const colors = {
+        blue: "text-blue-400",
+        green: "text-green-400",
+        red: "text-red-400",
+        yellow: "text-yellow-400"
+    };
+    
+    calibrationMessage.textContent = message;
+    calibrationMessage.className = `${colors[type]} mb-4`;
+    
+    if (type === "green") {
+        calibrationMessage.classList.add("calibration-success", "p-3", "rounded");
+        setTimeout(() => {
+            calibrationMessage.classList.remove("calibration-success", "p-3", "rounded");
+        }, 3000);
+    }
+}
+
+// Battery display function (unchanged)
+async function updateBatteryDisplay() {
+    try {
         const response = await fetch('/api/battery');
         const data = await response.json();
         
@@ -174,41 +687,35 @@
         document.getElementById('batteryState').textContent = data.status;
         document.getElementById('calibrationOffset').textContent = `${data.calibration_offset}V`;
         
-        // Color code the battery status
         const voltageElement = document.getElementById('currentVoltage');
         const percentageElement = document.getElementById('currentPercentage');
         const statusElement = document.getElementById('batteryState');
         
         if (data.critical_battery) {
-          voltageElement.className = "text-red-400";
-          percentageElement.className = "text-red-400";
-          statusElement.className = "text-red-400";
+            voltageElement.className = "text-red-400";
+            percentageElement.className = "text-red-400";
+            statusElement.className = "text-red-400";
         } else if (data.low_battery) {
-          voltageElement.className = "text-yellow-400";
-          percentageElement.className = "text-yellow-400";
-          statusElement.className = "text-yellow-400";
+            voltageElement.className = "text-yellow-400";
+            percentageElement.className = "text-yellow-400";
+            statusElement.className = "text-yellow-400";
         } else {
-          voltageElement.className = "text-green-400";
-          percentageElement.className = "text-green-400";
-          statusElement.className = "text-green-400";
+            voltageElement.className = "text-green-400";
+            percentageElement.className = "text-green-400";
+            statusElement.className = "text-green-400";
         }
-      } catch (error) {
+    } catch (error) {
         console.error('Error updating battery display:', error);
-      }
     }
+}
 
-    // Fetch current calibration factor
-    fetch('/api/calibrationfactor')
-      .then(response => response.text())
-      .then((data) => {
-        document.getElementById('currentCalib').textContent = data;
-      });
-      
-    // Initial battery display update
-    updateBatteryDisplay();
-    
-    // Update battery display every 5 seconds
-    setInterval(updateBatteryDisplay, 5000);
+// Initialize the page when loaded
+document.addEventListener('DOMContentLoaded', initializeCalibrationPage);
+
+// Update battery display every 5 seconds
+setInterval(updateBatteryDisplay, 5000);
+// Initial battery display update
+updateBatteryDisplay();
 </script>
 </body>
 </html>
